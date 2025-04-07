@@ -12,9 +12,9 @@ import * as utils from './utils.js';
 
 /**
  * Initialize the application
- * 
+ *
  * @returns {Promise<boolean>} - True if initialization successful
- * 
+ *
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/all | MDN: Promise.all}
  */
 async function initialize() {
@@ -25,25 +25,37 @@ async function initialize() {
   // 4. Catch any errors, log them, and return false
 
   // YOUR CODE HERE
+  try {
+    await Promise.all([
+      cache.initializeCache(),
+      favorites.initializeFavorites()
+    ]);
+    await cache.clearExpiredCache();
+    return true;
+  } catch (error) {
+    console.error('Error during initialization:', error.message);
+    return false;
+  }
+
 }
 
 /**
  * Search for recipes with caching
  * Demonstrates using cache before making API calls
- * 
+ *
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises | MDN: Using promises}
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/try...catch | MDN: try...catch}
  */
 async function searchRecipes() {
   const query = readlineSync.question('Enter search term: ');
-  
+
   if (!query.trim()) {
     console.log('Search term cannot be empty');
     return;
   }
-  
+
   console.log(`Searching for "${query}"...`);
-  
+
   try {
     // CHALLENGE 19: Implement searchRecipes function
     // 1. Create a cache key for this search (e.g., `search_${query.toLowerCase()}`)
@@ -55,6 +67,24 @@ async function searchRecipes() {
     // 5. If the user wants to view details, call viewRecipeDetails with the chosen recipe ID
 
     // YOUR CODE HERE
+    const cacheKey = `search_${query.toLowerCase()}`;
+    const results = await cache.getCachedOrFetch(cacheKey, () => api.searchMealsByName(query));
+
+    if (results.length === 0) {
+      console.log('No recipes found');
+      return;
+    }
+
+    console.log(utils.formatRecipeList(results));
+
+    const viewDetails = readlineSync.keyInYNStrict('Would you like to view details for a recipe?');
+    if (viewDetails) {
+      const index = readlineSync.questionInt(`Enter recipe number (1-${results.length}): `, {
+        limit: input => input >= 1 && input <= results.length,
+        limitMessage: `Please enter a number between 1 and ${results.length}`
+      });
+      await viewRecipeDetails(results[index - 1].idMeal);
+    }
   } catch (error) {
     console.error('Error searching recipes:', error.message);
   }
@@ -63,9 +93,9 @@ async function searchRecipes() {
 /**
  * View recipe details with related recipes
  * Demonstrates Promise chaining
- * 
+ *
  * @param {string} recipeId - ID of recipe to view
- * 
+ *
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises | MDN: Using promises}
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/then | MDN: Promise.then}
  */
@@ -73,14 +103,14 @@ async function viewRecipeDetails(recipeId) {
   if (!recipeId) {
     recipeId = readlineSync.question('Enter recipe ID: ');
   }
-  
+
   if (!recipeId.trim()) {
     console.log('Recipe ID cannot be empty');
     return;
   }
-  
+
   console.log(`Fetching details for recipe ${recipeId}...`);
-  
+
   try {
     // CHALLENGE 20: Implement viewRecipeDetails function
     // 1. Create a cache key for this recipe (e.g., `recipe_${recipeId}`)
@@ -94,6 +124,34 @@ async function viewRecipeDetails(recipeId) {
     //    - Handle any errors in the chain
 
     // YOUR CODE HERE
+    const cacheKey = `recipe_${recipeId}`;
+    const recipeDetails = await cache.getCachedOrFetch(cacheKey, () => api.getMealById(recipeId));
+
+    if (!recipeDetails) {
+      console.log('Recipe not found');
+      return;
+    }
+
+    console.log(utils.formatRecipe(recipeDetails));
+
+    const isFavorite = await favorites.isInFavorites(recipeDetails.idMeal);
+    const action = readlineSync.keyInYNStrict(isFavorite ? 'Remove from favorites?' : 'Add to favorites?');
+
+    if (action) {
+      if (isFavorite) {
+        await favorites.removeFavorite(recipeDetails.idMeal);
+        console.log('Recipe removed from favorites.');
+      } else {
+        await favorites.addFavorite(recipeDetails);
+        console.log('Recipe added to favorites.');
+      }
+    }
+
+    const relatedRecipes = await api.getRelatedRecipes(recipeDetails.strCategory);
+    if (relatedRecipes && relatedRecipes.length > 0) {
+      console.log('Related Recipes:');
+      console.log(utils.formatRecipeList(relatedRecipes));
+    }
   } catch (error) {
     console.error('Error viewing recipe details:', error.message);
   }
@@ -105,17 +163,17 @@ async function viewRecipeDetails(recipeId) {
  */
 async function exploreByFirstLetter() {
   const letters = readlineSync.question('Enter up to 3 letters to search (e.g. abc): ');
-  
+
   if (!letters.trim()) {
     console.log('Please enter at least one letter');
     return;
   }
-  
+
   // Get unique letters (limit to 3 to avoid API abuse)
   const uniqueLetters = Array.from(new Set(letters.toLowerCase())).slice(0, 3);
-  
+
   console.log(`Searching for recipes starting with: ${uniqueLetters.join(', ')}...`);
-  
+
   try {
     // CHALLENGE 21: Implement exploreByFirstLetter function
     // 1. Create a cache key for these letters (e.g., `letters_${uniqueLetters.sort().join('')}`)
@@ -125,6 +183,24 @@ async function exploreByFirstLetter() {
     // 5. If the user wants to view details, call viewRecipeDetails with the chosen recipe ID
 
     // YOUR CODE HERE
+    const cacheKey = `letters_${uniqueLetters.sort().join('')}`;
+    const results = await cache.getCachedOrFetch(cacheKey, () => api.searchMealsByFirstLetter(uniqueLetters));
+
+    if (results.length === 0) {
+      console.log('No recipes found');
+      return;
+    }
+
+    console.log(utils.formatRecipeList(results));
+
+    const viewDetails = readlineSync.keyInYNStrict('Would you like to view details for a recipe?');
+    if (viewDetails) {
+      const index = readlineSync.questionInt(`Enter recipe number (1-${results.length}): `, {
+        limit: input => input >= 1 && input <= results.length,
+        limitMessage: `Please enter a number between 1 and ${results.length}`
+      });
+      await viewRecipeDetails(results[index - 1].idMeal);
+    }
   } catch (error) {
     console.error('Error exploring recipes by first letter:', error.message);
   }
@@ -136,14 +212,14 @@ async function exploreByFirstLetter() {
  */
 async function searchByIngredient() {
   const ingredient = readlineSync.question('Enter an ingredient: ');
-  
+
   if (!ingredient.trim()) {
     console.log('Ingredient cannot be empty');
     return;
   }
-  
+
   console.log(`Searching for recipes with ${ingredient}...`);
-  
+
   try {
     // CHALLENGE 22: Implement searchByIngredient function
     // 1. Create a cache key for this ingredient (e.g., `ingredient_${ingredient.toLowerCase()}`)
@@ -155,6 +231,29 @@ async function searchByIngredient() {
     // 7. If the user wants to view details, call viewRecipeDetails with the chosen recipe ID
 
     // YOUR CODE HERE
+    const cacheKey = `ingredient_${ingredient.toLowerCase()}`;
+    const results = await cache.getCachedOrFetch(cacheKey, () => api.getMealsByIngredient(ingredient));
+
+    if (typeof results === 'string') {
+      console.log(results);
+      return;
+    }
+
+    if (results.length === 0) {
+      console.log('No recipes found');
+      return;
+    }
+
+    console.log(utils.formatRecipeList(results));
+
+    const viewDetails = readlineSync.keyInYNStrict('Would you like to view details for a recipe?');
+    if (viewDetails) {
+      const index = readlineSync.questionInt(`Enter recipe number (1-${results.length}): `, {
+        limit: input => input >= 1 && input <= results.length,
+        limitMessage: `Please enter a number between 1 and ${results.length}`
+      });
+      await viewRecipeDetails(results[index - 1].idMeal);
+    }
   } catch (error) {
     console.error('Error searching by ingredient:', error.message);
   }
@@ -167,17 +266,17 @@ async function viewFavorites() {
   try {
     // Get favorites
     const favoriteRecipes = await favorites.getFavorites();
-    
+
     if (favoriteRecipes.length === 0) {
       console.log('You have no favorite recipes');
       return;
     }
-    
+
     console.log(utils.formatRecipeList(favoriteRecipes));
-    
+
     // Allow viewing details
-    const viewDetails = readlineSync.keyInYN('Would you like to view details for a recipe?');
-    
+    const viewDetails = readlineSync.keyInYNStrict('Would you like to view details for a recipe?');
+
     if (viewDetails) {
       const index = readlineSync.questionInt(`Enter recipe number (1-${favoriteRecipes.length}): `, {
         limit: input => {
@@ -186,7 +285,7 @@ async function viewFavorites() {
         },
         limitMessage: `Please enter a number between 1 and ${favoriteRecipes.length}`
       });
-      
+
       // View the selected recipe
       await viewRecipeDetails(favoriteRecipes[index - 1].idMeal);
     }
@@ -198,12 +297,12 @@ async function viewFavorites() {
 /**
  * Discover random recipes
  * Demonstrates Promise.race to get the first of several random recipes
- * 
+ *
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/race | MDN: Promise.race}
  */
 async function discoverRandom() {
   console.log('Fetching random recipes...');
-  
+
   try {
     // CHALLENGE 23: Implement discoverRandom function
     // 1. Create three promises for random recipes using api.getRandomMeal()
@@ -214,6 +313,33 @@ async function discoverRandom() {
     // 6. Handle any errors appropriately
 
     // YOUR CODE HERE
+    const randomRecipePromises = [
+      api.getRandomMeal(),
+      api.getRandomMeal(),
+      api.getRandomMeal()
+    ];
+
+    const randomRecipe = await Promise.race(randomRecipePromises);
+
+    if (!randomRecipe) {
+      console.log('No random recipe found');
+      return;
+    }
+
+    console.log(utils.formatRecipe(randomRecipe));
+
+    const isFavorite = await favorites.isInFavorites(randomRecipe.idMeal);
+    const action = readlineSync.keyInYNStrict(isFavorite ? 'Remove from favorites?' : 'Add to favorites?');
+
+    if (action) {
+      if (isFavorite) {
+        await favorites.removeFavorite(randomRecipe.idMeal);
+        console.log('Recipe removed from favorites.');
+      } else {
+        await favorites.addFavorite(randomRecipe);
+        console.log('Recipe added to favorites.');
+      }
+    }
   } catch (error) {
     console.error('Error discovering random recipes:', error.message);
   }
@@ -231,12 +357,12 @@ async function showMainMenu() {
   console.log('5. View favorites');
   console.log('6. Discover random recipe');
   console.log('7. Exit');
-  
+
   const choice = readlineSync.questionInt('Enter your choice (1-7): ', {
     limit: [1, 2, 3, 4, 5, 6, 7],
     limitMessage: 'Please enter a number between 1 and 7'
   });
-  
+
   switch (choice) {
     case 1:
       await searchRecipes();
@@ -259,16 +385,15 @@ async function showMainMenu() {
     case 7:
       console.log('Thank you for using Recipe Explorer!');
       process.exit(0);
-      break;
   }
-  
+
   // Return to main menu after function completes
   return showMainMenu();
 }
 
 /**
  * Main application entry point
- * 
+ *
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function | MDN: async function}
  * @see {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/catch | MDN: Promise.catch}
  */
@@ -282,6 +407,16 @@ async function main() {
   // 6. Add error handling for any uncaught exceptions
 
   // YOUR CODE HERE
+  console.log('Initializing the Recipe Explorer...');
+
+  const initializationSuccessful = await initialize();
+
+  if (!initializationSuccessful) {
+    console.error('Initialization failed. Exiting...');
+    process.exit(1);
+  }
+  console.log('Welcome to the Recipe Explorer!');
+  await showMainMenu();
 }
 
 // Check if this file is being run directly
